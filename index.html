@@ -2493,6 +2493,18 @@ window.eRenderPublic=eRender;
         <div class="ft-card-desc">For each retailer, pick the contract country tier (clause 11). 90-day surcharge auto-detected from DPF due dates where Sent to Atradius? = TRUE. Selections are remembered for next month.</div>
         ${parsedInvoicePreview}
         ${integrationBanner}
+        <details style="background:#f8fafc;border:1px solid var(--ft-border);border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:12px;">
+          <summary style="cursor:pointer;font-weight:600;color:var(--ft-blue);">ℹ️ How is the +2% past-due surcharge decided?</summary>
+          <div style="margin-top:8px;color:var(--ft-text);line-height:1.6;">
+            <p style="margin-bottom:6px;">For each debtor we compare two dates:</p>
+            <ul style="margin:0 0 8px 18px;">
+              <li><strong>Payment date</strong> — from the <em>Payback items</em> section (page 3) of the Atradius invoice. This is when Atradius (or Ankorstore directly) received the money.</li>
+              <li><strong>Oldest due date</strong> — from the included checkouts in your DPF files (the ones still ticked on Step 3). If you untick a checkout, it's not counted.</li>
+            </ul>
+            <p style="margin-bottom:6px;">If <code>paymentDate − oldestDueDate &gt; 90 days</code>, the <strong>+2% surcharge</strong> (contract clause 11.4) applies on top of the base country tier rate.</p>
+            <p style="margin:6px 0 0;color:var(--ft-text-muted);font-size:11px;">The auto-detection tag next to each debtor shows the source — e.g. <code>auto from DPF: yes (180d)</code>. Tick or untick the checkbox to override if the auto value looks wrong.</p>
+          </div>
+        </details>
         ${rows}
         <div class="ft-actions">
           <button class="ft-btn ft-btn-back" id="ft-back">← Back</button>
