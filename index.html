@@ -1475,6 +1475,41 @@ window.eRenderPublic=eRender;
     return COUNTRY_TO_TIER[normalizeCountry(country)] || null;
   }
 
+    // Read a row value by Excel column letter (A=0, B=1, ..., Z=25, AA=26, ...). Position-based.
+  function colByLetter(row, letters){
+    if (!row) return null;
+    const keys = Object.keys(row);
+    let idx = 0;
+    const L = String(letters).toUpperCase();
+    for (let i = 0; i < L.length; i++){ idx = idx * 26 + (L.charCodeAt(i) - 64); }
+    idx -= 1;
+    if (idx < 0 || idx >= keys.length) return null;
+    return row[keys[idx]];
+  }
+
+  // Returns true if a DPF row should be EXCLUDED from the checkout review.
+  // Exclusion rules (per Ankorstore DPF convention):
+  //   - column BJ contains 'x'  (case-insensitive)  → checkout already handled
+  //   - any of columns BM, BN, BO, BP, BQ has any non-empty value → checkout in special status
+  //   - columns BU, BV, BX contain the word 'paid' (case-insensitive) → already paid
+  function isCheckoutExcluded(row){
+    if (!row) return false;
+    // Rule 1: BJ contains 'x'
+    const bj = colByLetter(row, 'BJ');
+    if (bj != null && String(bj).trim().toLowerCase() === 'x') return true;
+    // Rule 2: any of BM, BN, BO, BP, BQ non-empty
+    for (const letter of ['BM','BN','BO','BP','BQ']){
+      const v = colByLetter(row, letter);
+      if (v != null && String(v).trim() !== '') return true;
+    }
+    // Rule 3: 'paid' substring in BU, BV or BX
+    for (const letter of ['BU','BV','BX']){
+      const v = colByLetter(row, letter);
+      if (v != null && String(v).trim().toLowerCase().includes('paid')) return true;
+    }
+    return false;
+  }
+
     // Read a DPF file (CSV or XLSX) → array of row objects keyed by column headers.
   // Uses the same libraries the Reconciliation/Escalation tools already load (Papa, XLSX).
   function readDpfFile(file){
@@ -1535,6 +1570,8 @@ window.eRenderPublic=eRender;
     ];
     for (const { row, source } of all){
       if (!isSentToAtradius(rowGet(row, 'Sent to Atradius?', 'Sent to Atradius', 'sent_to_atradius'))) continue;
+      // Apply Ankorstore-specific exclusion rules (BJ=x, BM-BQ filled, BU/BV/BX = 'paid')
+      if (isCheckoutExcluded(row)) continue;
       const rawRid = rowGet(row, 'retailer_id', 'retailer id', 'retailerid', 'id_retailer');
       const rid = String(rawRid || '').trim().replace(/\.0$/, '').replace(/[^0-9A-Za-z]/g, '');
       if (!rid) continue;
