@@ -1487,27 +1487,40 @@ window.eRenderPublic=eRender;
     return row[keys[idx]];
   }
 
-  // Returns true if a DPF row should be EXCLUDED from the checkout review.
-  // Exclusion rules (per Ankorstore DPF convention):
-  //   - column BJ contains 'x'  (case-insensitive)  → checkout already handled
+  // Returns a string explaining WHY a DPF row should be excluded from the 90-day
+  // calculation, or null if it should be included. We keep the row visible in
+  // Step 3 with the reason shown so the user can re-include it if needed.
+  // Rules (per Ankorstore DPF convention):
+  //   - column BJ contains 'x' (case-insensitive) → checkout already handled
   //   - any of columns BM, BN, BO, BP, BQ has any non-empty value → checkout in special status
   //   - columns BU, BV, BX contain the word 'paid' (case-insensitive) → already paid
-  function isCheckoutExcluded(row){
-    if (!row) return false;
-    // Rule 1: BJ contains 'x'
+  function getExclusionReason(row){
+    if (!row) return null;
     const bj = colByLetter(row, 'BJ');
-    if (bj != null && String(bj).trim().toLowerCase() === 'x') return true;
-    // Rule 2: any of BM, BN, BO, BP, BQ non-empty
+    if (bj != null && String(bj).trim().toLowerCase() === 'x') return "BJ = 'x' (already handled)";
     for (const letter of ['BM','BN','BO','BP','BQ']){
       const v = colByLetter(row, letter);
-      if (v != null && String(v).trim() !== '') return true;
+      if (v != null && String(v).trim() !== '') return letter + " filled (special status)";
     }
-    // Rule 3: 'paid' substring in BU, BV or BX
     for (const letter of ['BU','BV','BX']){
       const v = colByLetter(row, letter);
-      if (v != null && String(v).trim().toLowerCase().includes('paid')) return true;
+      if (v != null && commentIsAffirmativelyPaid(String(v))) return letter + " says 'paid'";
     }
-    return false;
+    return null;
+  }
+
+  // True only if the cell contains the word 'paid' AND is not a negation like
+  // 'not paid', 'unpaid', 'non-paid', 'never paid'. Case-insensitive.
+  function commentIsAffirmativelyPaid(text){
+    if (!text) return false;
+    const s = String(text).trim().toLowerCase();
+    if (!s) return false;
+    // Negation prefixes that flip the meaning: unpaid, non-paid, nonpaid, non paid
+    if (/(?:^|[^a-z])(?:un|non[-\s]?)paid/.test(s)) return false;
+    // Negation words anywhere in the string: not, never, non
+    if (/\b(?:not|never|non)\b/.test(s)) return false;
+    // Otherwise: does it contain the standalone word 'paid'?
+    return /\bpaid\b/.test(s);
   }
 
     // Read a DPF file (CSV or XLSX) → array of row objects keyed by column headers.
@@ -1570,8 +1583,9 @@ window.eRenderPublic=eRender;
     ];
     for (const { row, source } of all){
       if (!isSentToAtradius(rowGet(row, 'Sent to Atradius?', 'Sent to Atradius', 'sent_to_atradius'))) continue;
-      // Apply Ankorstore-specific exclusion rules (BJ=x, BM-BQ filled, BU/BV/BX = 'paid')
-      if (isCheckoutExcluded(row)) continue;
+      // Check Ankorstore-specific exclusion reasons — soft exclusion: row stays
+      // visible but will be unticked by default in Step 3 with the reason shown.
+      const exclusionReason = getExclusionReason(row);
       const rawRid = rowGet(row, 'retailer_id', 'retailer id', 'retailerid', 'id_retailer');
       const rid = String(rawRid || '').trim().replace(/\.0$/, '').replace(/[^0-9A-Za-z]/g, '');
       if (!rid) continue;
@@ -1590,7 +1604,8 @@ window.eRenderPublic=eRender;
         tier: lookupTier(country),
         dueDate: validDue,
         source: source,
-        included: true   // default — user can toggle off in Step 3
+        exclusionReason: exclusionReason,
+        included: !exclusionReason   // auto-unticked if a rule matched; user can override
       });
     }
     return out;
@@ -2226,6 +2241,7 @@ window.eRenderPublic=eRender;
 
     const totalIncluded = checkouts.filter(c => c.included).length;
     const totalExcluded = checkouts.length - totalIncluded;
+    const autoExcludedCount = checkouts.filter(c => c.exclusionReason).length;
 
     const renderCheckout = (ck) => {
       const payDate = (inv.payback.find(p => p.debtorId === ck.retailerId) || {}).paymentDate || '—';
@@ -2235,12 +2251,15 @@ window.eRenderPublic=eRender;
             : `${ck.daysPastDue}d past due`)
         : 'no due date';
       const dueTxt = ck.dueDate ? ck.dueDate.toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'numeric'}) : '—';
+      const reasonBadge = ck.exclusionReason
+        ? `<span class="ft-badge ft-badge-orange" style="margin-left:6px;">auto-excluded: ${ck.exclusionReason}</span>`
+        : '';
       return `
-        <tr data-checkoutid="${ck.checkoutId}" data-retailerid="${ck.retailerId}" ${!ck.included ? 'style="opacity:.45;text-decoration:line-through;"' : ''}>
+        <tr data-checkoutid="${ck.checkoutId}" data-retailerid="${ck.retailerId}" ${!ck.included ? 'style="opacity:.55;"' : ''}>
           <td><input type="checkbox" class="ft-ck-toggle" data-checkoutid="${ck.checkoutId}" data-retailerid="${ck.retailerId}" ${ck.included ? 'checked' : ''}></td>
           <td><code style="font-size:11px;">${ck.checkoutId || '—'}</code></td>
           <td><code style="font-size:11px;">${dueTxt}</code></td>
-          <td>${daysTxt} <span style="color:var(--ft-text-muted);font-size:11px;">(pmt ${payDate})</span></td>
+          <td>${daysTxt} <span style="color:var(--ft-text-muted);font-size:11px;">(pmt ${payDate})</span>${reasonBadge}</td>
           <td><span class="ft-badge ft-badge-gray">${ck.source}</span></td>
         </tr>`;
     };
@@ -2280,7 +2299,7 @@ window.eRenderPublic=eRender;
         <div class="ft-card-title">Step 3 — Review identified checkouts</div>
         <div class="ft-card-desc">These are the DPF checkouts (Sent to Atradius? = TRUE) that match each debtor on this invoice. Untick any you want to exclude from the 90-day surcharge calculation — the oldest <strong>included</strong> checkout's due date determines whether the +2% surcharge applies.</div>
         <div class="ft-alert ft-alert-info">
-          📊 <div><strong>${checkouts.length} checkout${checkouts.length===1?'':'s'} matched across ${sortedRetailers.length} retailer${sortedRetailers.length===1?'':'s'}.</strong> ${totalIncluded} included, ${totalExcluded} excluded.</div>
+          📊 <div><strong>${checkouts.length} checkout${checkouts.length===1?'':'s'} matched across ${sortedRetailers.length} retailer${sortedRetailers.length===1?'':'s'}.</strong> ${totalIncluded} included for the 90-day calculation, ${totalExcluded} excluded${autoExcludedCount ? ` (${autoExcludedCount} auto-excluded by DPF status — see badges below)` : ''}. Tick a row to override.</div>
         </div>
         ${missingBlock}
         ${groupBlocks || '<div style="text-align:center;padding:20px;color:var(--ft-text-muted);">No checkouts to review.</div>'}
@@ -2302,7 +2321,7 @@ window.eRenderPublic=eRender;
         if (target) target.included = e.target.checked;
         // Re-render only this row's styling and the group counter
         const row = e.target.closest('tr');
-        if (row) row.style.cssText = target.included ? '' : 'opacity:.45;text-decoration:line-through;';
+        if (row) row.style.cssText = target.included ? '' : 'opacity:.55;';
         // Update counts
         render();
       });
